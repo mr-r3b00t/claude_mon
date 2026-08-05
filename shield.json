@@ -1,0 +1,157 @@
+{
+  "_comment": "claudemon shield configuration. Countermeasures are OFF by default. Read the safety section of the README before arming.",
+  "mode": "monitor",
+  "_mode": "off = no actions and no evaluation. monitor = evaluate and log what WOULD happen, take nothing (dry run). armed = actually execute configured actions.",
+  "auto": {
+    "enabled": false,
+    "_enabled": "Automatic response to rule findings. Manual operator actions from the UI work regardless of this setting.",
+    "minSeverity": "critical",
+    "bySeverity": {
+      "critical": "freeze",
+      "high": "alert",
+      "medium": "alert",
+      "low": "alert"
+    },
+    "byCategory": {
+      "exfiltration": "freeze",
+      "credential-access": "alert",
+      "destructive": "freeze",
+      "defence-evasion": "freeze",
+      "command-and-control": "sinkhole"
+    },
+    "byRule": {
+      "EVADE-004": "kill",
+      "EXFIL-002": "sinkhole"
+    },
+    "_precedence": "byRule beats byCategory beats bySeverity. Actions: alert | freeze | kill | sinkhole | none."
+  },
+  "safety": {
+    "protectSessionProcess": true,
+    "_protectSessionProcess": "Never signal the claude process that owns a session. Freezing it hangs the user's session; killing it ends their work. Leave true.",
+    "protectPatterns": [
+      "launchd",
+      "kernel_task",
+      "loginwindow",
+      "WindowServer",
+      "Finder",
+      "Claude.app/Contents/MacOS/Claude",
+      "claudemon.py",
+      "sshd",
+      "systemd"
+    ],
+    "_protectPatterns": "Never signal a process whose command matches any of these.",
+    "requireInTree": true,
+    "_requireInTree": "Only ever signal processes inside the tracked Claude process tree. Leave true \u2014 this is the main guard against hitting an unrelated process.",
+    "allowKill": true,
+    "allowFreeze": true,
+    "allowSinkhole": true,
+    "maxActionsPerMinute": 12,
+    "_maxActionsPerMinute": "Circuit breaker. Exceeding this disarms the shield back to monitor mode rather than continuing to act.",
+    "autoResumeAfterS": 0,
+    "_autoResumeAfterS": "Automatically SIGCONT a frozen process after this many seconds. 0 = stay frozen until an operator resumes it.",
+    "killGraceS": 3,
+    "_killGraceS": "SIGTERM, wait this long, then SIGKILL."
+  },
+  "preExecution": {
+    "enabled": false,
+    "_enabled": "Pre-execution gate. Requires the PreToolUse hook: python3 install-hooks.py --apply. Off means tool calls are never gated.",
+    "mode": "warn",
+    "_mode": "Caps the strongest verdict the gate may return. off = never gate. warn = record only, never interrupt. ask = escalate to the human's permission prompt. block = refuse the call outright.",
+    "minSeverity": "critical",
+    "_minSeverity": "Floor for the generic bySeverity path only. An explicit byRule or byCategory entry is a deliberate policy statement and applies even below this floor.",
+    "bySeverity": {
+      "critical": "block",
+      "high": "ask",
+      "medium": "warn",
+      "low": "warn"
+    },
+    "byCategory": {
+      "destructive": "ask",
+      "exfiltration": "block",
+      "defence-evasion": "block",
+      "credential-access": "ask"
+    },
+    "byRule": {
+      "EVADE-004": "block",
+      "DESTR-002": "block",
+      "CRED-004": "ask"
+    },
+    "_precedence": "byRule beats byCategory (both ignore minSeverity), then bySeverity subject to minSeverity, then capped by mode.",
+    "allowRules": [],
+    "_allowRules": "Rule ids that must never gate a call, however severe. Use this when a rule is noisy for your workflow rather than turning the gate off.",
+    "allowTools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "TodoWrite"
+    ],
+    "_allowTools": "Tools that are never gated. Read-only tools by default \u2014 gating them costs latency on every call for little benefit.",
+    "timeoutMs": 800,
+    "_timeoutMs": "How long the hook waits for a verdict before applying failMode.",
+    "failMode": "open",
+    "_failMode": "open = allow the call if the monitor is down, slow or erroring. closed = deny it. Open is the default: a monitoring tool must not wedge the agent when it is not running. Choose closed only if you would rather stop than proceed unobserved."
+  },
+  "sinkhole": {
+    "neverBlock": [
+      "160.79.104.",
+      "127.",
+      "::1",
+      "localhost"
+    ],
+    "_neverBlock": "Superseded by egress.never, which is consulted first. Kept for compatibility.",
+    "enforcement": "freeze-owner",
+    "_enforcement": "What to do when a blocked host is contacted again. freeze-owner | kill-owner | none. Process-level only \u2014 see writeFirewallRules for packet-level.",
+    "writeFirewallRules": true,
+    "_writeFirewallRules": "Generate pfctl and /etc/hosts snippets under data/ for you to review and apply with sudo. claudemon never runs sudo itself.",
+    "applyCommand": null,
+    "_applyCommand": "Optional shell template to apply a block, e.g. 'sudo pfctl -t claudemon_block -T add {ip}'. Requires a NOPASSWD sudoers entry you create yourself. Left null, nothing privileged is ever run."
+  },
+  "audit": {
+    "logFile": "shield-actions.jsonl",
+    "_logFile": "Every action, attempted or refused, is appended here under the data directory."
+  },
+  "egress": {
+    "_comment": "Outbound network policy. One authoritative list; precedence is never > block > allow > mode default.",
+    "mode": "monitor",
+    "_mode": "monitor = classify and record, enforce nothing (default). blocklist = deny what is listed, allow the rest. allowlist = allow only what is listed, deny the rest (default-deny).",
+    "never": [
+      "160.79.104.0/23",
+      "127.0.0.0/8",
+      "::1",
+      "fe80::/10",
+      "*.anthropic.com",
+      "*.claude.ai"
+    ],
+    "_never": "Can never be blocked, whatever the mode or lists say. Keeps the agent's own model API and loopback reachable \u2014 an allowlist typo would otherwise strand it mid-task.",
+    "allow": [
+      "*.github.com",
+      "*.githubusercontent.com",
+      "registry.npmjs.org",
+      "*.pypi.org",
+      "*.pythonhosted.org",
+      "*.docker.io",
+      "*.golang.org",
+      "crates.io",
+      "*.crates.io",
+      "*.debian.org",
+      "*.ubuntu.com"
+    ],
+    "_allow": "Entry forms: 1.2.3.4 | 10.0.0.0/8 | 160.79.104. | api.example.com | *.example.com | example.com:443 | :4444 | *",
+    "block": [
+      "*.ngrok.io",
+      "*.ngrok.app",
+      "webhook.site",
+      "*.oast.fun",
+      "transfer.sh",
+      "pastebin.com",
+      "0x0.st",
+      "gofile.io",
+      "anonfiles.com"
+    ],
+    "_block": "Explicit deny. Beats any allow entry, so a broad allow cannot silently re-permit these.",
+    "onViolation": "alert",
+    "_onViolation": "alert = record only. freeze-owner = SIGSTOP the process that opened it. kill-owner = terminate it. Process-level: packet filtering needs root, so pfctl rules are generated for you instead.",
+    "logAllowed": false,
+    "_logAllowed": "Record allowed connections too, not just violations. Verbose but useful when first building an allowlist."
+  }
+}

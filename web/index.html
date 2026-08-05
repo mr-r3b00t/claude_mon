@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claudemon</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">claudemon<span class="sub">Claude Code live monitor</span></div>
+  <div class="tabs">
+    <button class="tab active" data-tab="live">Live</button>
+    <button class="tab" data-tab="history">History</button>
+    <button class="tab" data-tab="cyber">Cyber<span id="c-badge" class="badge"></span></button>
+    <button class="tab" data-tab="config">Config</button>
+  </div>
+  <div class="hdr-stats">
+    <span class="stat"><b id="s-sessions">0</b> sessions</span>
+    <span class="stat"><b id="s-procs">0</b> procs</span>
+    <span class="stat"><b id="s-conns">0</b> conns</span>
+    <span class="stat"><b id="s-events">0</b> events</span>
+    <span class="stat"><b id="s-rate">0</b>/s</span>
+  </div>
+  <div class="hdr-right">
+    <select id="session-filter" title="Filter by session"><option value="">all sessions</option></select>
+    <span id="conn" class="conn off">connecting…</span>
+  </div>
+</header>
+
+<main id="view-live">
+  <section class="pane stream">
+    <div class="pane-hd">
+      <h2>Activity</h2>
+      <div class="filters" id="filters"></div>
+      <input id="search" type="search" placeholder="filter text…" spellcheck="false">
+      <button id="pause" class="btn" title="Pause autoscroll">⏸ follow</button>
+      <button id="clear" class="btn" title="Clear the stream">clear</button>
+    </div>
+    <div id="log" class="log"></div>
+  </section>
+
+  <aside class="side">
+    <section class="pane">
+      <div class="pane-hd"><h2>Sessions</h2></div>
+      <div id="sessions" class="rows"></div>
+    </section>
+
+    <section class="pane">
+      <div class="pane-hd"><h2>Subagents</h2><span class="hint" id="agent-hint"></span></div>
+      <div id="agents" class="rows"></div>
+    </section>
+
+    <section class="pane">
+      <div class="pane-hd"><h2>Process tree</h2><span class="hint" id="proc-hint"></span></div>
+      <div id="procs" class="rows mono"></div>
+    </section>
+
+    <section class="pane">
+      <div class="pane-hd"><h2>Network</h2><span class="hint" id="net-hint"></span></div>
+      <div id="net" class="rows mono"></div>
+    </section>
+
+    <section class="pane">
+      <div class="pane-hd"><h2>Tokens this session</h2></div>
+      <div id="tokens" class="rows mono"></div>
+    </section>
+  </aside>
+</main>
+
+<main id="view-history" style="display:none">
+  <section class="pane">
+    <div class="pane-hd">
+      <h2>Action graph</h2>
+      <div class="filters" id="h-filters"></div>
+      <input id="h-search" type="search" placeholder="highlight…" spellcheck="false">
+      <button id="h-fit" class="btn">fit</button>
+      <button id="h-expand" class="btn">expand all</button>
+      <button id="h-collapse" class="btn">collapse</button>
+      <button id="h-reload" class="btn">reload</button>
+      <span class="hint" id="h-status">–</span>
+    </div>
+    <div class="graph-wrap"><svg id="h-svg"></svg></div>
+    <div class="graph-key">
+      drag to pan · scroll to zoom · click a node to inspect · ± collapses a branch —
+      <span class="dash">dashed edges are time-correlated, not recorded causal links</span>
+    </div>
+  </section>
+  <aside class="pane detail">
+    <div class="pane-hd"><h2>Node detail</h2></div>
+    <div id="h-detail" class="rows"></div>
+  </aside>
+</main>
+
+<main id="view-cyber" style="display:none">
+  <section class="pane">
+    <div class="pane-hd">
+      <h2>Findings</h2>
+      <div id="c-tiles" class="tiles"></div>
+      <select id="c-cat"><option value="">all categories</option></select>
+      <input id="c-search" type="search" placeholder="filter…" spellcheck="false">
+      <button id="c-reload" class="btn">reload</button>
+      <span class="hint" id="c-count"></span>
+    </div>
+    <div id="s-bar" class="s-bar"></div>
+    <div id="s-toast" class="s-toast" style="display:none"></div>
+    <div id="c-alert" class="c-alert" style="display:none"></div>
+    <div id="c-list" class="rows findings"></div>
+    <div class="graph-key">
+      detection, not judgement — a finding means this happened and should be visible,
+      not that it was malicious or unauthorised
+    </div>
+  </section>
+  <aside class="side">
+    <section class="pane">
+      <div class="pane-hd"><h2>Finding detail</h2></div>
+      <div id="c-detail" class="rows"></div>
+    </section>
+    <section class="pane">
+      <div class="pane-hd"><h2>Shield state</h2></div>
+      <div id="s-state" class="rows"></div>
+    </section>
+    <section class="pane">
+      <div class="pane-hd"><h2>Egress policy</h2><span class="hint" id="e-hint"></span></div>
+      <div id="e-bar" class="e-bar"></div>
+      <div id="e-lists" class="rows mono"></div>
+    </section>
+    <section class="pane">
+      <div class="pane-hd"><h2>Action log</h2></div>
+      <div id="s-log" class="rows mono"></div>
+    </section>
+  </aside>
+</main>
+
+<main id="view-config" style="display:none">
+  <section class="pane k-pane" data-view="rules">
+    <div class="pane-hd">
+      <h2>Ruleset</h2>
+      <div class="tabs sub">
+        <button class="k-vtab active" data-view="rules">Rules</button>
+        <button class="k-vtab" data-view="shield">Shield &amp; gate</button>
+      </div>
+      <input id="k-filter" type="search" placeholder="find a rule…" spellcheck="false">
+      <button id="k-new" class="btn">+ new</button>
+      <button id="k-del" class="btn danger">delete</button>
+      <button id="k-reload" class="btn">reload from disk</button>
+      <button id="k-revert" class="btn" disabled>revert</button>
+      <button id="k-save" class="btn primary" disabled>save</button>
+    </div>
+    <div id="k-head" class="k-head"></div>
+    <div id="k-result" class="k-result" style="display:none"></div>
+    <div id="k-list" class="rows k-list"></div>
+  </section>
+
+  <section class="pane k-pane" data-view="shield" style="display:none">
+    <div class="pane-hd">
+      <h2>Shield &amp; gate</h2>
+      <div class="tabs sub">
+        <button class="k-vtab" data-view="rules">Rules</button>
+        <button class="k-vtab active" data-view="shield">Shield &amp; gate</button>
+      </div>
+      <button id="k-shield-save" class="btn primary">save</button>
+      <span class="hint">validated before writing · previous file backed up</span>
+    </div>
+    <textarea id="k-shield" class="k-json" spellcheck="false"></textarea>
+  </section>
+
+  <aside class="pane detail">
+    <div class="pane-hd"><h2>Rule editor</h2></div>
+    <div id="k-edit" class="rows"></div>
+  </aside>
+</main>
+
+<script src="/app.js"></script>
+<script src="/history.js"></script>
+<script src="/cyber.js"></script>
+<script src="/shield.js"></script>
+<script src="/config.js"></script>
+</body>
+</html>

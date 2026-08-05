@@ -1,0 +1,860 @@
+{
+  "version": 1,
+  "description": "claudemon default ruleset \u2014 behaviours by an AI agent that could lead to a security incident. Detection, not judgement: a hit means 'a human should be able to see this happened', not 'this was malicious'.",
+  "settings": {
+    "egressAllowHosts": [
+      "anthropic",
+      "claude",
+      "githubusercontent",
+      "registry.npmjs",
+      "pypi.org",
+      "files.pythonhosted"
+    ],
+    "egressAllowPorts": [
+      "443",
+      "53"
+    ],
+    "secretEgressWindowS": 180,
+    "harvestWindowS": 300,
+    "harvestThreshold": 4,
+    "enumBurstWindowS": 60,
+    "enumBurstThreshold": 120,
+    "egressAllowIPs": [
+      "160.79.104.",
+      "160.79.105.",
+      "127.",
+      "::1",
+      "fe80:"
+    ]
+  },
+  "rules": [
+    {
+      "id": "CRED-001",
+      "name": "SSH private key or config access",
+      "severity": "high",
+      "category": "credential-access",
+      "mitre": "T1552.004",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\.ssh/id_[a-z0-9_]+(?!\\.pub)",
+        "\\bid_rsa\\b(?!\\.pub)",
+        "\\bid_ed25519\\b(?!\\.pub)",
+        "\\.ssh/authorized_keys",
+        "\\.ssh/config\\b"
+      ],
+      "rationale": "Private keys grant direct access to other systems. An agent reading them is one step from moving laterally or leaking them into a transcript.",
+      "check": "Was key material needed for the task? Check whether the content reached a tool result, a file write, or the network."
+    },
+    {
+      "id": "CRED-002",
+      "name": "Cloud provider credential access",
+      "severity": "high",
+      "category": "credential-access",
+      "mitre": "T1552.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\.aws/credentials",
+        "\\.aws/config",
+        "\\.azure/(accessTokens|azureProfile)",
+        "gcloud/(credentials|application_default)",
+        "\\.config/gcloud",
+        "\\.kube/config",
+        "\\.docker/config\\.json",
+        "terraform\\.tfstate"
+      ],
+      "rationale": "These files hold long-lived cloud keys or session tokens. Exposure escalates from one host to an entire cloud tenancy.",
+      "check": "Confirm the task needed cloud auth. Rotate anything that may have been rendered into a transcript."
+    },
+    {
+      "id": "CRED-003",
+      "name": "Environment / dotenv secret access",
+      "severity": "medium",
+      "category": "credential-access",
+      "mitre": "T1552.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(^|[\\s/\"'])\\.env(\\.[a-z]+)?\\b",
+        "\\.npmrc",
+        "\\.pypirc",
+        "\\.netrc",
+        "\\.git-credentials",
+        "\\.pgpass",
+        "credentials\\.json",
+        "secrets?\\.(ya?ml|json|toml)"
+      ],
+      "rationale": "Application secrets. Commonly read for legitimate reasons, which is exactly why the access should still be visible.",
+      "check": "Did the value end up echoed into output or committed anywhere?"
+    },
+    {
+      "id": "CRED-004",
+      "name": "macOS Keychain or credential store access",
+      "severity": "critical",
+      "category": "credential-access",
+      "mitre": "T1555.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "security\\s+(find-generic-password|find-internet-password|dump-keychain|export)",
+        "login\\.keychain",
+        "Keychains/",
+        "\\bkeychain_dump\\b"
+      ],
+      "rationale": "Direct extraction from the OS credential store. There is almost no benign automated reason for an agent to do this.",
+      "check": "Treat as credential compromise until proven otherwise. Identify which items were requested."
+    },
+    {
+      "id": "CRED-005",
+      "name": "Browser credential / cookie store access",
+      "severity": "high",
+      "category": "credential-access",
+      "mitre": "T1539",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "Cookies\\.binarycookies",
+        "(Chrome|Brave|Edge|Chromium)/[^\"']*(Login Data|Cookies|Local State)",
+        "places\\.sqlite",
+        "key4\\.db",
+        "logins\\.json",
+        "Safari/Cookies"
+      ],
+      "rationale": "Session cookies bypass MFA. Stealing them is the standard route to account takeover without ever touching a password.",
+      "check": "Any read here should be assumed to yield live sessions. Consider forcing re-auth."
+    },
+    {
+      "id": "CRED-006",
+      "name": "System shadow / password database access",
+      "severity": "critical",
+      "category": "credential-access",
+      "mitre": "T1003.008",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "/etc/shadow",
+        "/etc/master\\.passwd",
+        "\\bdscl\\b[^\\n]*ShadowHashData",
+        "/var/db/dslocal"
+      ],
+      "rationale": "Password hash extraction. Precedes offline cracking.",
+      "check": "Escalate. Verify whether the read succeeded (it requires root)."
+    },
+    {
+      "id": "CRED-007",
+      "name": "Hardcoded secret pattern in tool output",
+      "severity": "high",
+      "category": "credential-exposure",
+      "mitre": "T1552",
+      "targets": [
+        "tool_result",
+        "tool_use"
+      ],
+      "match": [
+        "AKIA[0-9A-Z]{16}",
+        "ASIA[0-9A-Z]{16}",
+        "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+        "gh[pousr]_[A-Za-z0-9]{16,}",
+        "sk-ant-[A-Za-z0-9_-]{20,}",
+        "xox[baprs]-[A-Za-z0-9-]{10,}",
+        "eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\."
+      ],
+      "rationale": "A live secret has been rendered into the transcript. The transcript is stored on disk in cleartext and is sent to the model as context.",
+      "check": "Rotate the credential. It is now in ~/.claude/projects and in model context.",
+      "scan": "content"
+    },
+    {
+      "id": "EXFIL-001",
+      "name": "Outbound data upload via HTTP client",
+      "severity": "high",
+      "category": "exfiltration",
+      "mitre": "T1041",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "curl[^\\n;|&]*(\\s-T\\s|--upload-file|\\s-F\\s|--data-binary|-d\\s*@)",
+        "wget[^\\n;|&]*--post-file",
+        "curl[^\\n;|&]*-X\\s*(POST|PUT)"
+      ],
+      "rationale": "Pushing local data to a remote endpoint. This is the shape of exfiltration whether or not that was the intent.",
+      "check": "Identify the destination host and exactly what was sent.",
+      "caseSensitive": true
+    },
+    {
+      "id": "EXFIL-002",
+      "name": "Upload to a file-sharing or tunnelling service",
+      "severity": "critical",
+      "category": "exfiltration",
+      "mitre": "T1567.002",
+      "targets": [
+        "tool_use",
+        "proc",
+        "net"
+      ],
+      "match": [
+        "transfer\\.sh",
+        "0x0\\.st",
+        "file\\.io",
+        "pastebin\\.com",
+        "ix\\.io",
+        "termbin",
+        "ngrok",
+        "requestbin",
+        "webhook\\.site",
+        "burpcollaborator",
+        "oast\\.(fun|live|site|pro)",
+        "interact\\.sh",
+        "bashupload",
+        "temp\\.sh",
+        "gofile\\.io",
+        "anonfiles"
+      ],
+      "rationale": "Anonymous drop sites and interaction-callback domains have essentially no legitimate operational use from an automated agent.",
+      "check": "Treat as confirmed egress. Recover what was uploaded from the command line."
+    },
+    {
+      "id": "EXFIL-003",
+      "name": "Encoded payload piped outbound",
+      "severity": "high",
+      "category": "exfiltration",
+      "mitre": "T1132.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "base64[^\\n|]*\\|[^\\n]*(curl|wget|nc\\b|ncat)",
+        "(curl|wget)[^\\n]*\\$\\(.*base64",
+        "xxd[^\\n|]*\\|[^\\n]*(curl|nc\\b)",
+        "gzip[^\\n|]*\\|[^\\n]*(curl|nc\\b)"
+      ],
+      "rationale": "Encoding immediately before transmission is an obfuscation pattern, not a convenience.",
+      "check": "Decode the payload from the command to see what left the host.",
+      "caseSensitive": true
+    },
+    {
+      "id": "EXFIL-004",
+      "name": "Archive staged then transferred",
+      "severity": "medium",
+      "category": "exfiltration",
+      "mitre": "T1560.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(tar|zip|7z)[^\\n]*(\\.ssh|\\.aws|Documents|Desktop|\\.gnupg)",
+        "\\b(scp|rsync|sftp)\\b[^\\n]*@[^\\n]*:",
+        "rclone\\s+(copy|sync|move)"
+      ],
+      "rationale": "Collection-then-transfer is the classic staging pattern.",
+      "check": "Identify the archive contents and the destination."
+    },
+    {
+      "id": "EXFIL-005",
+      "name": "DNS or ICMP tunnelling shape",
+      "severity": "high",
+      "category": "exfiltration",
+      "mitre": "T1048.003",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(dig|nslookup|host)\\s+[^\\s]*\\$\\(",
+        "ping\\s+-[a-z]*p\\s",
+        "\\bdnscat\\b",
+        "\\biodine\\b"
+      ],
+      "rationale": "Covert channels that bypass egress filtering and web proxies.",
+      "check": "Inspect the query names \u2014 data is usually in the subdomain label."
+    },
+    {
+      "id": "DESTR-001",
+      "name": "Recursive or forced deletion",
+      "severity": "high",
+      "category": "destructive",
+      "mitre": "T1485",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\brm\\s+(-[a-zA-Z]*r[a-zA-Z]*\\s+)+",
+        "\\bfind\\b[^\\n]*-delete",
+        "\\bshred\\b",
+        "\\bsrm\\b"
+      ],
+      "rationale": "Irreversible data loss. The single most common way an agent turns a task into an incident.",
+      "check": "Confirm the target path and that it was intended and recoverable."
+    },
+    {
+      "id": "DESTR-005",
+      "name": "Forced single-file deletion",
+      "severity": "low",
+      "category": "destructive",
+      "mitre": "T1485",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\brm\\s+-[a-zA-Z]*f[a-zA-Z]*\\s+(?!-)"
+      ],
+      "not": [
+        "\\brm\\s+-[a-zA-Z]*r"
+      ],
+      "rationale": "A forced delete of a specific file. Routine, but it is still data removal and belongs in the record.",
+      "check": "Confirm the file was scratch and not the only copy."
+    },
+    {
+      "id": "DESTR-002",
+      "name": "Disk or filesystem level write",
+      "severity": "critical",
+      "category": "destructive",
+      "mitre": "T1561.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\bdd\\b[^\\n]*of=/dev/",
+        "\\bmkfs\\b",
+        "\\bdiskutil\\s+(eraseDisk|eraseVolume|reformat)",
+        "\\bnewfs\\b",
+        "\\bfdisk\\b"
+      ],
+      "rationale": "Destroys a volume. Not recoverable by normal means.",
+      "check": "Halt and verify the target device immediately."
+    },
+    {
+      "id": "DESTR-003",
+      "name": "History-rewriting or force git operation",
+      "severity": "medium",
+      "category": "destructive",
+      "mitre": "T1485",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "git[^\\n]*push[^\\n]*(--force|-f)\\b",
+        "git[^\\n]*reset[^\\n]*--hard",
+        "git[^\\n]*clean[^\\n]*-[a-z]*f",
+        "git[^\\n]*filter-(branch|repo)",
+        "git[^\\n]*branch[^\\n]*-D\\b"
+      ],
+      "rationale": "Can discard other people's work or rewrite shared history.",
+      "check": "Check the branch and whether it is shared. Reflog may still hold the old tip."
+    },
+    {
+      "id": "DESTR-004",
+      "name": "Destructive database statement",
+      "severity": "high",
+      "category": "destructive",
+      "mitre": "T1485",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\bDROP\\s+(TABLE|DATABASE|SCHEMA)\\b",
+        "\\bTRUNCATE\\s+TABLE\\b",
+        "\\bDELETE\\s+FROM\\b(?![^\\n]*\\bWHERE\\b)"
+      ],
+      "rationale": "Bulk data loss, including an unbounded DELETE with no WHERE clause.",
+      "check": "Confirm the environment was not production and a backup exists."
+    },
+    {
+      "id": "PERSIST-001",
+      "name": "Launch agent / daemon persistence write",
+      "severity": "critical",
+      "category": "persistence",
+      "mitre": "T1543.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "writeOnly": true,
+      "match": [
+        "(Library/Launch(Agents|Daemons))",
+        "launchctl\\s+(load|bootstrap|enable)"
+      ],
+      "rationale": "Survives reboot and runs without a user present. An agent establishing persistence is a defining incident indicator.",
+      "check": "Read the plist. Identify what binary it launches and who wrote it."
+    },
+    {
+      "id": "PERSIST-002",
+      "name": "Shell profile or rc file modification",
+      "severity": "high",
+      "category": "persistence",
+      "mitre": "T1546.004",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "writeOnly": true,
+      "match": [
+        "\\.(bash|zsh)rc",
+        "\\.(bash|zsh)_profile",
+        "\\.profile\\b",
+        "\\.zshenv",
+        "/etc/(profile|paths)",
+        "\\.config/fish/config\\.fish"
+      ],
+      "rationale": "Executes on every new shell. A common quiet foothold and an easy way to poison future tooling.",
+      "check": "Diff the file against version control or a known good copy."
+    },
+    {
+      "id": "PERSIST-003",
+      "name": "Scheduled task creation",
+      "severity": "high",
+      "category": "persistence",
+      "mitre": "T1053",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "crontab\\s+-[el]?\\s*[^\\n]*",
+        "\\bat\\s+now\\b",
+        "systemctl\\s+enable",
+        "/etc/cron\\.(d|daily|hourly)"
+      ],
+      "rationale": "Recurring execution outside the session.",
+      "check": "List the resulting schedule and its command."
+    },
+    {
+      "id": "PERSIST-004",
+      "name": "Agent configuration or hook modification",
+      "severity": "high",
+      "category": "persistence",
+      "mitre": "T1546",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "writeOnly": true,
+      "match": [
+        "\\.claude/settings(\\.local)?\\.json",
+        "\\.claude/hooks",
+        "\\.mcp\\.json",
+        "claude_desktop_config\\.json"
+      ],
+      "rationale": "Hooks run arbitrary commands on every tool call. Modifying agent config changes the behaviour of all future sessions.",
+      "check": "Diff the config. Verify every hook command and MCP server entry."
+    },
+    {
+      "id": "PRIVESC-001",
+      "name": "Privilege escalation attempt",
+      "severity": "high",
+      "category": "privilege-escalation",
+      "mitre": "T1548.003",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\bsudo\\b",
+        "\\bdoas\\b",
+        "osascript[^\\n]*with\\s+administrator\\s+privileges",
+        "security\\s+authorizationdb",
+        "\\bdseditgroup\\b[^\\n]*admin"
+      ],
+      "rationale": "Actions taken as root are largely unbounded and often unlogged in the agent transcript.",
+      "check": "Determine whether the elevation succeeded and what ran with it."
+    },
+    {
+      "id": "PRIVESC-002",
+      "name": "Permissive or setuid permission change",
+      "severity": "high",
+      "category": "privilege-escalation",
+      "mitre": "T1222",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "chmod\\s+[0-7]*777",
+        "chmod\\s+[^\\n]*\\+s\\b",
+        "chmod\\s+[^\\n]*u\\+s",
+        "chown\\s+[^\\n]*root"
+      ],
+      "rationale": "World-writable or setuid files create a durable local escalation path.",
+      "check": "Locate the file and restore least-privilege permissions."
+    },
+    {
+      "id": "EVADE-001",
+      "name": "Security control disabled",
+      "severity": "critical",
+      "category": "defence-evasion",
+      "mitre": "T1562.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "csrutil\\s+disable",
+        "spctl\\s+--master-disable",
+        "socketfilterfw[^\\n]*--setglobalstate\\s+off",
+        "defaults\\s+write[^\\n]*GatekeeperDisable",
+        "nvram\\s+boot-args",
+        "systemsetup\\s+-setremotelogin\\s+on"
+      ],
+      "rationale": "Turning off SIP, Gatekeeper, the firewall or enabling remote login removes the platform's own defences.",
+      "check": "Re-enable and establish who authorised the change."
+    },
+    {
+      "id": "EVADE-002",
+      "name": "Log or shell history tampering",
+      "severity": "high",
+      "category": "defence-evasion",
+      "mitre": "T1070.003",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(rm|truncate|>)\\s*[^\\n]*\\.(bash|zsh)_history",
+        "history\\s+-c",
+        "unset\\s+HISTFILE",
+        "export\\s+HISTFILE=/dev/null",
+        "\\blog\\s+erase\\b",
+        "rm\\s+[^\\n]*/var/log"
+      ],
+      "rationale": "Anti-forensics. Destroys the evidence a responder would need.",
+      "check": "Preserve what remains. Treat surrounding activity as suspect."
+    },
+    {
+      "id": "EVADE-003",
+      "name": "Security tooling terminated",
+      "severity": "critical",
+      "category": "defence-evasion",
+      "mitre": "T1562.001",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(^|[|;&(`]\\s*|\\bsudo\\s+|\\bxargs\\s+)(kill|pkill|killall)[^\\n]*(falcon|crowdstrike|sentinel|carbonblack|cbdaemon|defender|mdatp|osquery|santad|jamf|wdav|elastic-agent|splunkd|little\\s?snitch)"
+      ],
+      "rationale": "Stopping EDR, monitoring or DLP creates a blind window.",
+      "check": "Confirm the agent restarted and check what happened while it was down."
+    },
+    {
+      "id": "EVADE-004",
+      "name": "Remote code execution via pipe to shell",
+      "severity": "critical",
+      "category": "execution",
+      "mitre": "T1059.004",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(curl|wget)[^\\n|]*\\|\\s*(sudo\\s+)?(ba|z|k)?sh\\b",
+        "(curl|wget)[^\\n|]*\\|\\s*(python3?|perl|ruby|node)\\b(?!\\s+-[cme])",
+        "\\beval\\s*\\(?\\s*\\$\\(\\s*(curl|wget)"
+      ],
+      "rationale": "Executes unreviewed remote content with the agent's privileges. The delivery mechanism for most commodity compromise. Piping into an interpreter that already has -c/-m/-e is excluded: there stdin is data being parsed, not code being run.",
+      "check": "Fetch the URL separately and read what would have run."
+    },
+    {
+      "id": "EVADE-005",
+      "name": "Obfuscated command execution",
+      "severity": "high",
+      "category": "execution",
+      "mitre": "T1027",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "echo\\s+[A-Za-z0-9+/=]{40,}\\s*\\|\\s*base64\\s+(-d|--decode)",
+        "base64\\s+(-d|--decode)[^\\n|]*\\|\\s*(ba|z|)sh",
+        "python3?\\s+-c\\s+[\"'][^\"'\\n]*(exec|eval)\\(",
+        "\\bxor\\b[^\\n]*decode"
+      ],
+      "rationale": "Obfuscation exists to defeat review. There is no benign reason to base64-wrap a shell command.",
+      "check": "Decode and read the payload."
+    },
+    {
+      "id": "LATERAL-001",
+      "name": "Offensive security tooling execution",
+      "severity": "high",
+      "category": "lateral-movement",
+      "mitre": "T1210",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(^|[|;&(`]\\s*|\\bsudo\\s+|\\bxargs\\s+)(secretsdump|psexec|smbexec|wmiexec|dcomexec|atexec|getST|getTGT|GetUserSPNs|ntlmrelayx|mssqlclient)(\\.py)?\\b",
+        "(^|[|;&(`]\\s*|\\bsudo\\s+|\\bxargs\\s+)(netexec|nxc|crackmapexec)\\b",
+        "(^|[|;&(`]\\s*|\\bsudo\\s+|\\bxargs\\s+)(kerbrute|bloodhound-python|certipy|coercer|responder|mimikatz|hashcat)\\b",
+        "\\bjohn\\s+--"
+      ],
+      "rationale": "Credential-theft and lateral-movement tooling. Legitimate during an authorised engagement \u2014 which is exactly when you most need an accurate record of what ran and against what.",
+      "check": "Confirm target scope against the rules of engagement. Preserve the command line for the engagement log."
+    },
+    {
+      "id": "LATERAL-002",
+      "name": "Outbound remote shell / SSH session",
+      "severity": "medium",
+      "category": "lateral-movement",
+      "mitre": "T1021.004",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\bssh\\s+[^\\n]*@",
+        "\\bsshpass\\b",
+        "\\btelnet\\s+",
+        "\\bnc\\b[^\\n]*\\s-e\\s",
+        "\\bncat\\b[^\\n]*--exec",
+        "socat[^\\n]*exec"
+      ],
+      "rationale": "The agent is operating on a second host, beyond the boundary this monitor can see.",
+      "check": "Record which host and what ran there. Activity on the far side is invisible here."
+    },
+    {
+      "id": "LATERAL-003",
+      "name": "Network scanning",
+      "severity": "medium",
+      "category": "discovery",
+      "mitre": "T1046",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(^|[|;&(`]\\s*|\\bsudo\\s+|\\bxargs\\s+)(nmap|masscan|rustscan|zmap|naabu|arp-scan)\\b",
+        "\\bnc\\b[^\\n]*\\s-z\\b"
+      ],
+      "rationale": "Scanning generates noise on someone else's network and may breach acceptable-use policy even when internal.",
+      "check": "Confirm the target range is in scope and authorised."
+    },
+    {
+      "id": "LATERAL-004",
+      "name": "Listening socket opened",
+      "severity": "high",
+      "category": "command-and-control",
+      "mitre": "T1571",
+      "targets": [
+        "net"
+      ],
+      "listenOnly": true,
+      "rationale": "A process in the agent tree is accepting inbound connections. That is a backdoor shape unless it is a known dev server.",
+      "check": "Identify the process and port. Confirm it is an expected local service."
+    },
+    {
+      "id": "RECON-001",
+      "name": "Host and account discovery",
+      "severity": "low",
+      "category": "discovery",
+      "mitre": "T1087",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "\\bwhoami\\b",
+        "\\bdscl\\b[^\\n]*-list",
+        "\\bid\\s*$",
+        "\\bdsmemberutil\\b",
+        "\\blaunchctl\\s+list\\b",
+        "\\bsystem_profiler\\b",
+        "\\bnetstat\\b",
+        "\\bifconfig\\b",
+        "\\barp\\s+-a"
+      ],
+      "rationale": "Individually harmless. Meaningful as a cluster, or when it precedes credential access.",
+      "check": "Look at what happened next rather than at this alone."
+    },
+    {
+      "id": "RECON-002",
+      "name": "Broad filesystem search for secrets",
+      "severity": "high",
+      "category": "discovery",
+      "mitre": "T1083",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "(^|[|;&]\\s*)(find|grep|rg|ag)\\s[^\\n]*(password|passwd|secret|api[_-]?key|token|credential|BEGIN RSA)",
+        "grep\\s+-[a-zA-Z]*r[a-zA-Z]*\\s+[^\\n]*(passw|secret|token|api_key)"
+      ],
+      "rationale": "Content-based hunting for credentials across the filesystem, as opposed to opening one known config file.",
+      "check": "Review the matches returned \u2014 the results are in the transcript."
+    },
+    {
+      "id": "RECON-003",
+      "name": "Sensitive personal data store access",
+      "severity": "medium",
+      "category": "collection",
+      "mitre": "T1005",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "match": [
+        "Library/Messages/chat\\.db",
+        "Signal/sql",
+        "WhatsApp",
+        "Library/Mail/",
+        "AddressBook",
+        "Library/Application Support/(Notes|Photos)",
+        "Health/healthdb"
+      ],
+      "rationale": "Personal data with privacy and regulatory weight, rarely needed for an engineering task.",
+      "check": "Assess data-protection impact if the content entered the transcript."
+    },
+    {
+      "id": "INJECT-001",
+      "name": "Instruction-shaped text in tool output",
+      "severity": "high",
+      "category": "prompt-injection",
+      "mitre": "T1204",
+      "targets": [
+        "tool_result"
+      ],
+      "match": [
+        "ignore\\s+(all\\s+)?(previous|prior|above)\\s+instructions",
+        "disregard\\s+(your|all|previous)\\s+(instructions|rules|guidelines)",
+        "you\\s+are\\s+now\\s+(a|an|in)\\s",
+        "\\bsystem\\s*prompt\\s*:",
+        "<\\s*(system|important)\\s*>[^<]{0,200}(must|now|instead)",
+        "new\\s+instructions?\\s*:",
+        "do\\s+not\\s+tell\\s+the\\s+user"
+      ],
+      "rationale": "Content read from disk or the web is data, not instruction. Text like this in a tool result is an attempt to redirect the agent.",
+      "check": "Read the source file or page. Verify the agent did not act on it.",
+      "scan": "content"
+    },
+    {
+      "id": "INJECT-002",
+      "name": "Agent instruction file read from outside the working tree",
+      "severity": "medium",
+      "category": "prompt-injection",
+      "mitre": "T1204",
+      "targets": [
+        "tool_use"
+      ],
+      "match": [
+        "(CLAUDE|AGENTS)\\.md",
+        "\\.cursorrules",
+        "\\.github/copilot-instructions",
+        "\\.aider\\.conf"
+      ],
+      "rationale": "Instruction files carry directives the agent may follow. One found in a dependency, a scanned directory or a cloned repo is untrusted input.",
+      "check": "Confirm the file is inside the project you control, not something downloaded or scanned."
+    },
+    {
+      "id": "INJECT-003",
+      "name": "Hidden or zero-width characters in tool output",
+      "severity": "medium",
+      "category": "prompt-injection",
+      "mitre": "T1027",
+      "targets": [
+        "tool_result"
+      ],
+      "match": [
+        "[\\u200b-\\u200f\\u2060-\\u206f]",
+        "[\\ue000-\\uf8ff]"
+      ],
+      "rationale": "Zero-width and private-use characters hide instructions from a human reviewer while remaining visible to the model.",
+      "check": "Hexdump the source. Anything hidden was deliberately hidden.",
+      "scan": "content"
+    },
+    {
+      "id": "SCOPE-001",
+      "name": "Write outside the session working directory",
+      "severity": "medium",
+      "category": "scope",
+      "mitre": "T1565",
+      "targets": [
+        "tool_use"
+      ],
+      "scopeCheck": true,
+      "rationale": "The agent modified a file outside the directory it was given. Blast radius is wider than the task implies.",
+      "check": "Confirm the path was meant to be in scope."
+    },
+    {
+      "id": "SCOPE-002",
+      "name": "System directory modification",
+      "severity": "high",
+      "category": "scope",
+      "mitre": "T1565",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "writeOnly": true,
+      "match": [
+        "\\s/(etc|usr|bin|sbin|var|opt|System|Library)/",
+        "/usr/local/bin"
+      ],
+      "rationale": "Changes affect every user and process on the host, not just this project.",
+      "check": "Verify against package manager state or a backup."
+    },
+    {
+      "id": "NET-001",
+      "name": "Egress to unrecognised host",
+      "severity": "low",
+      "category": "command-and-control",
+      "mitre": "T1071.001",
+      "targets": [
+        "net"
+      ],
+      "egressCheck": true,
+      "rationale": "A connection from the agent tree to a host outside the expected set. Usually a package registry or docs site; occasionally not.",
+      "check": "Resolve the host and match it to a tool call at the same timestamp."
+    },
+    {
+      "id": "NET-002",
+      "name": "Egress on a non-standard port",
+      "severity": "medium",
+      "category": "command-and-control",
+      "mitre": "T1571",
+      "targets": [
+        "net"
+      ],
+      "portCheck": true,
+      "rationale": "Traffic avoiding 443 often exists to avoid inspection.",
+      "check": "Identify the listening service on the far side."
+    },
+    {
+      "id": "CUSTOM-001",
+      "name": "Round-trip probe",
+      "severity": "low",
+      "category": "custom",
+      "targets": [
+        "tool_use",
+        "proc"
+      ],
+      "scan": "command",
+      "match": [
+        "\\bclaudemon-roundtrip-probe\\b"
+      ],
+      "rationale": "",
+      "check": ""
+    }
+  ]
+}
